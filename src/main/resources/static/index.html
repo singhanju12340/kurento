@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+<link rel="stylesheet" href="/webjars/bootstrap/dist/css/bootstrap.min.css">
+<!--<link rel="stylesheet" href="/webjars/demo-console/index.css">-->
+<link rel="stylesheet" href="/webjars/ekko-lightbox/dist/ekko-lightbox.min.css">
+<script src="/webjars/bootstrap/dist/js/bootstrap.min.js"></script>
+<script src="/js/kurento-utils.min.js"></script>
+<script src="/js/index.js"></script>
+<link rel="stylesheet" href="/css/kurento.css">
+<div class="container">
+
+    <div class="row">
+
+        <div class="col-md-5">
+            <label class="control-label" for="peer">Name</label>
+            <input id="name" name="name" class="form-control" type="text"
+                   onkeydown="if (event.keyCode == 13) register();"/>
+        </div>
+        <div class="col-md-6 text-right">
+            <a id="register" href="#" class="btn btn-primary"><span
+                    class="glyphicon glyphicon-plus" onclick=register();></span> Register</a>
+        </div>
+    </div>
+
+
+    <div class="row">
+
+        <div class="col-md-6">
+            <label class="control-label" for="peer">Peer</label>
+            <input id="peer" name="peer" class="form-control" type="text"
+                   onkeydown="if (event.keyCode == 13) call();">
+        </div>
+        <div class="col-md-6 text-right">
+
+            <a id="uiStartBtn" href="#" class="btn btn-success" onclick="call()">
+                <span class="glyphicon glyphicon-play"></span>Start Call</a>
+            <a id="terminate"
+               href="#" class="btn btn-danger"><span
+                    class="glyphicon glyphicon-stop"></span> Stop</a>
+        </div>
+
+    </div>
+
+
+    <div class="row">
+        <div class="col-md-5">
+            <h3>Local stream</h3>
+            <video id="uiLocalVideo" autoplay playsinline muted
+                   width="480px" height="360px" poster="/img/webrtc.png"></video>
+        </div>
+        <div class="col-md-5">
+            <h3>Remote stream</h3>
+            <video id="uiRemoteVideo" autoplay playsinline
+                   width="480px" height="360px" poster="/img/webrtc.png"></video>
+        </div>
+    </div>
+
+
+<div class="row">
+    <div class="col-md-12">
+        <label class="control-label" for="console">Console</label>
+        <br>
+        <br>
+        <div id="console" class="democonsole">
+            <ul></ul>
+        </div>
+    </div>
+</div>
+</div>
+</body>
+</html>
