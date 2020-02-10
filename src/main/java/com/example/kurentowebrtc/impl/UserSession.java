@@ -27,6 +27,8 @@ public class UserSession
     private String sdpOffer;
     private String callingTo;
     private String callingFrom;
+    private WebRtcEndpoint playingWebRtcEndpoint;
+
 
     private MediaPipeline mediaPipeline;
     private WebRtcEndpoint webRtcEndpoint;
@@ -110,5 +112,16 @@ public class UserSession
         } else {
             candidateList.add(candidate);
         }
+    }
+
+
+    public void setPlayingWebRtcEndpoint(WebRtcEndpoint playingWebRtcEndpoint) {
+        this.playingWebRtcEndpoint = playingWebRtcEndpoint;
+    }
+
+
+    public void clear() {
+        this.webRtcEndpoint = null;
+        this.candidateList.clear();
     }
 }

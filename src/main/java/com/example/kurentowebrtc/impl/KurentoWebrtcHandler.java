@@ -23,7 +23,7 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
     private final SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-S");
     private static final Gson gson = new GsonBuilder().create();
 
-    private final ConcurrentHashMap<String, CallMediaPipeline> pipelines = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, MediaPipeline> userMediaPipelinesMap = new ConcurrentHashMap<>();
 
 
     @Autowired
@@ -57,6 +57,9 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
                 case "incomingCallResponse":
                     incomingCallResponse(userSession, jsonMessage);
                     break;
+                case "play":
+                    play(userSession, jsonMessage);
+                    break;
                 case "PROCEsdpOfferSS_SDP_OFFER":
                     // Start: Create user session and process SDP Offer
                     handleProcessSdpOffer(session, jsonMessage);
@@ -64,8 +67,9 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
                 case "ADD_ICE_CANDIDATE":
                     handleAddIceCandidate(session, jsonMessage);
                     break;
-                case "STOP":
+                case "stop":
                     stop(session);
+                    releasePipeline(userSession);
                     break;
                 case "ERROR":
                     //handleError(session, jsonMessage);
@@ -106,13 +110,13 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
 
             if ("accept".equals(callResponse)) {
                 log.debug("Accepted call from '{}' to '{}'", from, to);
-
                 CallMediaPipeline pipeline = null;
                 try {
-                    pipeline = new CallMediaPipeline(kurento);
-                    pipelines.put(calleer.getSessionId(), pipeline);
-                    pipelines.put(callee.getSessionId(), pipeline);
+                    pipeline = new CallMediaPipeline(kurento, from, to);
+                    userMediaPipelinesMap.put(calleer.getSessionId(), pipeline.getPipeline());
+                    userMediaPipelinesMap.put(callee.getSessionId(), pipeline.getPipeline());
 
+                    // process callee offer
                     callee.setWebRtcEndpoint(pipeline.getCalleeWebRtcEp());
                     pipeline.getCalleeWebRtcEp().addIceCandidateFoundListener(
                             new EventListener<IceCandidateFoundEvent>() {
@@ -132,6 +136,20 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
                                 }
                             });
 
+                    String calleeSdpOffer = jsonMessage.get("sdpOffer").getAsString();
+                    String calleeSdpAnswer = pipeline.generateSdpAnswerForCallee(calleeSdpOffer);
+                    JsonObject startCommunication = new JsonObject();
+                    startCommunication.addProperty("id", "startCommunication");
+                    startCommunication.addProperty("sdpAnswer", calleeSdpAnswer);
+
+                    synchronized (callee) {
+                        callee.sendMessage(startCommunication);
+                    }
+
+                    pipeline.getCalleeWebRtcEp().gatherCandidates();
+
+                    // process caller offer
+                    String callerSdpOffer = registry.getByName(from).getSdpOffer();
                     calleer.setWebRtcEndpoint(pipeline.getCallerWebRtcEp());
                     pipeline.getCallerWebRtcEp().addIceCandidateFoundListener(
                             new EventListener<IceCandidateFoundEvent>() {
@@ -150,20 +168,6 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
                                     }
                                 }
                             });
-
-                    String calleeSdpOffer = jsonMessage.get("sdpOffer").getAsString();
-                    String calleeSdpAnswer = pipeline.generateSdpAnswerForCallee(calleeSdpOffer);
-                    JsonObject startCommunication = new JsonObject();
-                    startCommunication.addProperty("id", "startCommunication");
-                    startCommunication.addProperty("sdpAnswer", calleeSdpAnswer);
-
-                    synchronized (callee) {
-                        callee.sendMessage(startCommunication);
-                    }
-
-                    pipeline.getCalleeWebRtcEp().gatherCandidates();
-
-                    String callerSdpOffer = registry.getByName(from).getSdpOffer();
                     String callerSdpAnswer = pipeline.generateSdpAnswerForCaller(callerSdpOffer);
                     JsonObject response = new JsonObject();
                     response.addProperty("id", "callResponse");
@@ -173,8 +177,9 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
                     synchronized (calleer) {
                         calleer.sendMessage(response);
                     }
-
                     pipeline.getCallerWebRtcEp().gatherCandidates();
+                    pipeline.record();
+
 
                 } catch (Throwable t) {
                     log.error(t.getMessage(), t);
@@ -183,8 +188,8 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
                         pipeline.release();
                     }
 
-                    pipelines.remove(calleer.getSessionId());
-                    pipelines.remove(callee.getSessionId());
+                    userMediaPipelinesMap.remove(calleer.getSessionId());
+                    userMediaPipelinesMap.remove(callee.getSessionId());
 
                     JsonObject response = new JsonObject();
                     response.addProperty("id", "callResponse");
@@ -248,9 +253,23 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
     }
 
 
-    private void stop(WebSocketSession session) {
-        log.info("stoping websocket session");
+    private void stop(WebSocketSession session) throws IOException {
+        log.info("stoping ");
+        UserSession stopperUser = registry.getBySession(session);
+        if (stopperUser != null) {
+            UserSession stoppedUser =
+                    (stopperUser.getCallingFrom() != null) ? registry.getByName(stopperUser.getCallingFrom())
+                            : stopperUser.getCallingTo() != null ? registry.getByName(stopperUser.getCallingTo())
+                            : null;
 
+            if (stoppedUser != null) {
+                JsonObject message = new JsonObject();
+                message.addProperty("id", "stop");
+                stoppedUser.sendMessage(message);
+                stoppedUser.clear();
+            }
+            stopperUser.clear();
+        }
     }
 
 
@@ -367,7 +386,11 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
                         ev.getTimestamp(), ev.getTags(), ev.getDescription());
 
                 //sendError(session, "[Kurento] " + ev.getDescription());
-                stop(session);
+                try {
+                    stop(session);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
         });
 
@@ -483,6 +506,85 @@ public class KurentoWebrtcHandler extends TextWebSocketHandler {
                                 ev.getCandidatePair().getRemoteCandidate());
                     }
                 });
+    }
+
+    private void play(UserSession userSession, JsonObject jsonMessage){
+        String username = jsonMessage.get("user").getAsString();
+        log.debug("Playing recorded call of user '{}'", username);
+
+        JsonObject response = new JsonObject();
+        response.addProperty("id", "playResponse");
+
+        final PlayMediaPipeline playMediaPipeline =
+                new PlayMediaPipeline(kurento, username, userSession.getSession());
+
+        userSession.setWebRtcEndpoint(playMediaPipeline.getWebRtcEp());
+
+        playMediaPipeline.getPlayerEp().addEndOfStreamListener(new EventListener<EndOfStreamEvent>() {
+            @Override
+            public void onEvent(EndOfStreamEvent event) {
+                UserSession usernew = registry.getBySession(userSession.getSession());
+                releasePipeline(usernew);
+                playMediaPipeline.sendPlayEnd(userSession.getSession());
+            }
+        });
+
+
+        playMediaPipeline.getWebRtcEp().addIceCandidateFoundListener(
+                new EventListener<IceCandidateFoundEvent>() {
+
+                    @Override
+                    public void onEvent(IceCandidateFoundEvent event) {
+                        JsonObject response = new JsonObject();
+                        response.addProperty("id", "iceCandidate");
+                        response.add("candidate", JsonUtils.toJsonObject(event.getCandidate()));
+                        try {
+                            synchronized (userSession) {
+                                userSession.getSession().sendMessage(new TextMessage(response.toString()));
+                            }
+                        } catch (IOException e) {
+                            log.debug(e.getMessage());
+                        }
+                    }
+                });
+
+        String sdpOffer = jsonMessage.get("sdpOffer").getAsString();
+        String sdpAnswer = playMediaPipeline.generateSdpAnswer(sdpOffer);
+
+        response.addProperty("response", "accepted");
+
+        response.addProperty("sdpAnswer", sdpAnswer);
+
+        playMediaPipeline.play();
+        userMediaPipelinesMap.put(userSession.getSessionId(), playMediaPipeline.getPipeline());
+        synchronized (userSession.getSession()) {
+            try {
+                userSession.sendMessage(response);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        playMediaPipeline.getWebRtcEp().gatherCandidates();
+
+    }
+
+    public void releasePipeline(UserSession session) {
+        String sessionId = session.getSessionId();
+        // set to null the endpoint of the other user
+
+        if (userMediaPipelinesMap.containsKey(sessionId)) {
+            userMediaPipelinesMap.get(sessionId).release();
+            userMediaPipelinesMap.remove(sessionId);
+        }
+        session.setWebRtcEndpoint(null);
+        session.setPlayingWebRtcEndpoint(null);
+
+        UserSession stoppedUser =
+                (session.getCallingFrom() != null) ? registry.getByName(session.getCallingFrom())
+                        : registry.getByName(session.getCallingTo());
+        stoppedUser.setWebRtcEndpoint(null);
+        stoppedUser.setPlayingWebRtcEndpoint(null);
     }
 
 }

@@ -140,6 +140,12 @@ ws.onmessage = function(message)
         case 'callResponse':
             callResponse(jsonMessage);
             break;
+        case 'playResponse':
+            playResponse(jsonMessage);
+            break
+        case 'stop':
+            stopcom();
+            break
         case 'ERROR':
             handleError(jsonMessage);
             break;
@@ -150,6 +156,19 @@ ws.onmessage = function(message)
     }
 }
 
+
+function playResponse(message) {
+    if (message.response != 'accepted') {
+        document.getElementById('uiLocalVideo').style.display = 'block';
+        alert(message.error);
+        document.getElementById('peer').focus();
+    } else {
+        webRtcPeer.processAnswer(message.sdpAnswer, function(error) {
+            if (error)
+                return console.error(error);
+        });
+    }
+}
 
 function startCommunication(message) {
     //process callee answer
@@ -353,6 +372,43 @@ function call() {
                 sendMessage(message);
             });
         });
+}
 
+function play() {
+    peername = document.getElementById("peer").value;
+    var options = {
+        remoteVideo : uiRemoteVideo,
+        onicecandidate : onIceCandidate
+    }
+    webRtcPeer = new kurentoUtils.WebRtcPeer.WebRtcPeerRecvonly(options,
+        function(error) {
+            if (error) {
+                return console.error(error);
+            }
+            this.generateOffer((error, offerSdp) =>{
+                console.log('Invoking SDP offer callback function');
+                var message = {
+                    id : 'play',
+                    user : document.getElementById('peer').value,
+                    sdpOffer : offerSdp
+                };
+                sendMessage(message);
+            });
+
+        });
+}
+
+
+function stopcom() {
+    if (webRtcPeer) {
+        webRtcPeer.dispose();
+        webRtcPeer = null;
+        var message = {
+            id : 'stop'
+        }
+        sendMessage(message);
+    }
+    document.getElementById('uiLocalVideo').style.display = 'block';
+    document.getElementById('uiRemoteVideo').style.display = 'block';
 
 }
